@@ -1,0 +1,6 @@
+dataset_training_od
+runs_yolo11l_batch8_epoch40
+data.zip
+PrintVersion_LV_NguyenHoangDuy.docx
+rusteye-website/server/model/best.pt
+rusteye-website/server/model/__pycache__
