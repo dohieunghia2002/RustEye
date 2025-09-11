@@ -4,3 +4,4 @@ data.zip
 PrintVersion_LV_NguyenHoangDuy.docx
 rusteye-website/server/model/best.pt
 rusteye-website/server/model/__pycache__
+rusteye-website/server/saved_models/isnet-general-use.pth

@@ -1,26 +1,21 @@
-"use client"
+"use client";
 import { useEffect, useRef, useState } from "react";
 import NextImage from "next/image";
 
-/**
- * RustEye — Hệ thống phát hiện và đánh giá hao mòn bề mặt trên cột trụ viễn thông
- * Frontend Next.js (pages/index.tsx)
- *
- * Back-end API (Flask) mặc định: http://localhost:5000/predict
- */
-
-const BACKEND_URL: string = "http://localhost:5000/predict";
+const BACKEND_URL = "http://localhost:5000"; // Chỉ cần domain, vì URL mask đã tương đối
 
 export default function RustEye() {
   const [file, setFile] = useState<File | null>(null);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
-  const [maskUrl, setMaskUrl] = useState<string | null>(null);
+  const [maskRustUrl, setMaskRustUrl] = useState<string | null>(null);
+  const [maskPoleUrl, setMaskPoleUrl] = useState<string | null>(null);
+  const [rustPercentage, setRustPercentage] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
-  const [opacity, setOpacity] = useState<number>(0.2);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [compositedReady, setCompositedReady] = useState<boolean>(false);
+  const [opacity, setOpacity] = useState<number>(0.2);
 
   const onFileSelected = (f: File) => {
     if (!f) return;
@@ -28,7 +23,9 @@ export default function RustEye() {
     setFile(f);
     const url = URL.createObjectURL(f);
     setImgUrl(url);
-    setMaskUrl(null);
+    setMaskRustUrl(null);
+    setMaskPoleUrl(null);
+    setRustPercentage(0);
     setCompositedReady(false);
   };
 
@@ -52,14 +49,16 @@ export default function RustEye() {
     }
     setIsLoading(true);
     setError("");
-    setMaskUrl(null);
+    setMaskRustUrl(null);
+    setMaskPoleUrl(null);
+    setRustPercentage(0);
     setCompositedReady(false);
 
     try {
       const formData = new FormData();
       formData.append("file", file);
 
-      const res = await fetch(BACKEND_URL, {
+      const res = await fetch(`${BACKEND_URL}/predict`, {
         method: "POST",
         body: formData,
       });
@@ -69,9 +68,10 @@ export default function RustEye() {
         throw new Error(`API lỗi: ${res.status} ${txt}`);
       }
 
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      setMaskUrl(url);
+      const data = await res.json();
+      setMaskRustUrl(`${BACKEND_URL}${data.mask_rust_url}`); // Gộp domain với URL
+      setMaskPoleUrl(`${BACKEND_URL}${data.mask_pole_url}`); // Gộp domain với URL
+      setRustPercentage(data.rust_percentage);
     } catch (err: any) {
       setError(err.message || "Có lỗi khi gọi API.");
     } finally {
@@ -80,13 +80,13 @@ export default function RustEye() {
   };
 
   const redrawComposite = async () => {
-    if (!imgUrl || !maskUrl) return;
+    if (!imgUrl || !maskPoleUrl) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     const [img, mask] = await Promise.all([
       loadImage(imgUrl),
-      loadImage(maskUrl),
+      loadImage(maskPoleUrl),
     ]);
 
     canvas.width = img.naturalWidth;
@@ -115,7 +115,7 @@ export default function RustEye() {
       const m = data[i];
       if (m > 0) {
         const a = Math.min(255, Math.floor(m * opacity));
-        od[i] = Math.max(od[i], 255);
+        od[i] = Math.max(od[i], 255); // Màu đỏ cho hao mòn
         od[i + 1] = od[i + 1] * (1 - opacity);
         od[i + 2] = od[i + 2] * (1 - opacity);
         od[i + 3] = Math.max(od[i + 3], a);
@@ -129,7 +129,7 @@ export default function RustEye() {
   useEffect(() => {
     redrawComposite();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [maskUrl, imgUrl, opacity]);
+  }, [maskPoleUrl, imgUrl, opacity]);
 
   const downloadComposite = () => {
     const canvas = canvasRef.current;
@@ -213,7 +213,7 @@ export default function RustEye() {
           )}
         </section>
 
-        <section className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <section className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="bg-white rounded-2xl shadow-sm p-4 border">
             <h2 className="font-semibold mb-3">Ảnh gốc</h2>
             {imgUrl ? (
@@ -230,11 +230,26 @@ export default function RustEye() {
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm p-4 border">
-            <h2 className="font-semibold mb-3">Mask từ mô hình</h2>
-            {maskUrl ? (
+            <h2 className="font-semibold mb-3">Mask hao mòn (YOLO)</h2>
+            {maskRustUrl ? (
               <img
-                src={maskUrl}
-                alt="mask"
+                src={maskRustUrl}
+                alt="mask_rust"
+                className="w-full h-auto rounded-xl border"
+              />
+            ) : (
+              <div className="h-64 grid place-content-center text-neutral-400">
+                Chưa có mask
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-sm p-4 border">
+            <h2 className="font-semibold mb-3">Mask cột (IS-Net)</h2>
+            {maskPoleUrl ? (
+              <img
+                src={maskPoleUrl}
+                alt="mask_pole"
                 className="w-full h-auto rounded-xl border"
               />
             ) : (
@@ -246,11 +261,18 @@ export default function RustEye() {
         </section>
 
         <section className="mt-8 bg-white rounded-2xl shadow-sm p-4 border">
+          <h2 className="font-semibold mb-3">Phần trăm hao mòn</h2>
+          <p className="text-2xl font-bold text-orange-500">
+            {rustPercentage.toFixed(2)}%
+          </p>
+        </section>
+
+        <section className="mt-8 bg-white rounded-2xl shadow-sm p-4 border">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold">Overlay (ảnh gốc + mask)</h2>
+            <h2 className="font-semibold">Overlay (ảnh gốc + mask cột)</h2>
             <div className="flex items-center gap-3">
               <label className="text-sm text-neutral-600">
-                Độ đậm vùng hư hại: {Math.round(opacity * 100)}%
+                Độ đậm vùng hao mòn: {Math.round(opacity * 100)}%
               </label>
               <input
                 type="range"
@@ -290,6 +312,7 @@ export default function RustEye() {
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    img.crossOrigin = "anonymous"; // thêm dòng này để cho phép CORS
     img.onload = () => resolve(img);
     img.onerror = reject;
     img.src = src;
