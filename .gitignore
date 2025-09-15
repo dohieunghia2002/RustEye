@@ -1,7 +1,17 @@
 dataset_training_od
 runs_yolo11l_batch8_epoch40
 data.zip
+rusteye-website/server/venv
 PrintVersion_LV_NguyenHoangDuy.docx
 rusteye-website/server/model/best.pt
 rusteye-website/server/model/__pycache__
 rusteye-website/server/saved_models/isnet-general-use.pth
+old
+Dataset_Train_Model
+dataset_cnn_v1
+dataset_cnn_v2
+*.keras
+sam2
+dataset_cnn_v1.zip
+dataset_cnn_v2.zip
+rusteye-website/server/checkpoints/sam2.1_hiera_tiny.pt
