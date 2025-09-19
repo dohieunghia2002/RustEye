@@ -22,13 +22,30 @@ interface PredictResult {
   };
 }
 
+interface VideoPredictResult {
+  output_video_url: string;
+  avg_rust_percentage: number;
+  fuzzy_level: number;
+  severity: number;
+  action: string;
+  model_used: string;
+}
+
 export default function RustEye() {
+  // States for image
   const [file, setFile] = useState<File | null>(null);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [maskRustUrl, setMaskRustUrl] = useState<string | null>(null);
   const [maskPoleUrl, setMaskPoleUrl] = useState<string | null>(null);
   const [maskSam2Url, setMaskSam2Url] = useState<string | null>(null);
   const [predictResult, setPredictResult] = useState<PredictResult | null>(null);
+
+  // States for video
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [outputVideoUrl, setOutputVideoUrl] = useState<string | null>(null);
+  const [videoPredictResult, setVideoPredictResult] = useState<VideoPredictResult | null>(null);
+  const [modelChoice, setModelChoice] = useState<"isnet" | "sam2">("isnet");
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
@@ -39,18 +56,40 @@ export default function RustEye() {
   const [compositedSam2Ready, setCompositedSam2Ready] = useState<boolean>(false);
   const [opacity, setOpacity] = useState<number>(0.2);
 
+  // Handle file selection
   const onFileSelected = (f: File) => {
-    if (!f) return;
     setError("");
-    setFile(f);
-    const url = URL.createObjectURL(f);
-    setImgUrl(url);
-    setMaskRustUrl(null);
-    setMaskPoleUrl(null);
-    setMaskSam2Url(null);
-    setPredictResult(null);
-    setCompositedIsnetReady(false);
-    setCompositedSam2Ready(false);
+    if (f.type.startsWith("image/")) {
+      setFile(f);
+      setVideoFile(null);
+      const url = URL.createObjectURL(f);
+      setImgUrl(url);
+      setMaskRustUrl(null);
+      setMaskPoleUrl(null);
+      setMaskSam2Url(null);
+      setPredictResult(null);
+      setCompositedIsnetReady(false);
+      setCompositedSam2Ready(false);
+      setVideoUrl(null);
+      setOutputVideoUrl(null);
+      setVideoPredictResult(null);
+    } else if (f.type.startsWith("video/")) {
+      setVideoFile(f);
+      setFile(null);
+      const url = URL.createObjectURL(f);
+      setVideoUrl(url);
+      setOutputVideoUrl(null);
+      setVideoPredictResult(null);
+      setImgUrl(null);
+      setMaskRustUrl(null);
+      setMaskPoleUrl(null);
+      setMaskSam2Url(null);
+      setPredictResult(null);
+      setCompositedIsnetReady(false);
+      setCompositedSam2Ready(false);
+    } else {
+      setError("Chỉ hỗ trợ file ảnh hoặc video.");
+    }
   };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -66,6 +105,7 @@ export default function RustEye() {
     }
   };
 
+  // Predict functions
   const requestPredict = async () => {
     if (!file) {
       setError("Vui lòng chọn ảnh trước.");
@@ -100,6 +140,47 @@ export default function RustEye() {
       setMaskPoleUrl(`${BACKEND_URL}${data.mask_pole_url}`);
       setMaskSam2Url(`${BACKEND_URL}${data.mask_sam2_url}`);
       setPredictResult(data);
+    } catch (err: any) {
+      setError(err.message || "Có lỗi khi gọi API.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const requestVideoPredict = async () => {
+    if (!videoFile) {
+      setError("Vui lòng chọn video trước.");
+      return;
+    }
+    setIsLoading(true);
+    setError("");
+    setOutputVideoUrl(null);
+    setVideoPredictResult(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", videoFile);
+      formData.append("model_choice", modelChoice);
+
+      const res = await fetch(`${BACKEND_URL}/predict_video`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`API lỗi: ${res.status} ${txt}`);
+      }
+
+      const data: VideoPredictResult = await res.json();
+
+      // Gán URL đầy đủ với backend
+      const fullOutputVideoUrl = `${BACKEND_URL}${data.output_video_url}`;
+      setOutputVideoUrl(fullOutputVideoUrl);
+      setVideoPredictResult(data);
+
+      // Debug: Kiểm tra URL sau khi set
+      console.log("Output Video URL:", fullOutputVideoUrl);
     } catch (err: any) {
       setError(err.message || "Có lỗi khi gọi API.");
     } finally {
@@ -150,30 +231,27 @@ export default function RustEye() {
     const od = overlay.data;
 
     for (let i = 0; i < od.length; i += 4) {
-      const mValue = maskData.data[i]; // Kênh R của mask cột
-      const rValue = rustData.data[i]; // Kênh R của mask hao mòn
+      const mValue = maskData.data[i];
+      const rValue = rustData.data[i];
 
       if (mValue > 0) {
         if (isSam2) {
-          // SAM2: Xanh dương cho cột
-          od[i] = od[i] * (1 - opacity); // Red
-          od[i + 1] = od[i + 1] * (1 - opacity); // Green
-          od[i + 2] = Math.max(od[i + 2], 255); // Blue
+          od[i] = od[i] * (1 - opacity);
+          od[i + 1] = od[i + 1] * (1 - opacity);
+          od[i + 2] = Math.max(od[i + 2], 255);
         } else {
-          // ISNet: Xanh dương cho cột
-          od[i] = od[i] * (1 - opacity); // Red
-          od[i + 1] = od[i + 1] * (1 - opacity); // Green
-          od[i + 2] = Math.max(od[i + 2], 255); // Blue
+          od[i] = od[i] * (1 - opacity);
+          od[i + 1] = od[i + 1] * (1 - opacity);
+          od[i + 2] = Math.max(od[i + 2], 255);
         }
-        od[i + 3] = 255; // Alpha
+        od[i + 3] = 255;
       }
 
       if (rValue > 0) {
-        // Đỏ cho hao mòn (YOLO), ưu tiên hơn cột nếu chồng lấp
-        od[i] = 255; // Red
-        od[i + 1] = od[i + 1] * (1 - opacity); // Green
-        od[i + 2] = od[i + 2] * (1 - opacity); // Blue
-        od[i + 3] = 255; // Alpha
+        od[i] = 255;
+        od[i + 1] = od[i + 1] * (1 - opacity);
+        od[i + 2] = od[i + 2] * (1 - opacity);
+        od[i + 3] = 255;
       }
     }
 
@@ -182,8 +260,8 @@ export default function RustEye() {
   };
 
   useEffect(() => {
-    redrawComposite(canvasIsnetRef, setCompositedIsnetReady, maskPoleUrl, maskRustUrl, false); // ISNet
-    redrawComposite(canvasSam2Ref, setCompositedSam2Ready, maskSam2Url, maskRustUrl, true); // SAM2
+    redrawComposite(canvasIsnetRef, setCompositedIsnetReady, maskPoleUrl, maskRustUrl, false);
+    redrawComposite(canvasSam2Ref, setCompositedSam2Ready, maskSam2Url, maskRustUrl, true);
   }, [maskPoleUrl, maskSam2Url, maskRustUrl, imgUrl, opacity]);
 
   const downloadComposite = (canvasRef: React.RefObject<HTMLCanvasElement | null>, prefix: string) => {
@@ -218,19 +296,18 @@ export default function RustEye() {
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-8">
-        {/* Upload Section */}
         <section
           onDrop={handleDrop}
           onDragOver={(e) => e.preventDefault()}
           className="border-2 border-dashed rounded-2xl p-6 bg-white shadow-sm flex flex-col items-center justify-center gap-3"
         >
           <p className="text-base font-medium">
-            Kéo thả ảnh cột trụ vào đây hoặc chọn từ máy
+            Kéo thả ảnh hoặc video vào đây hoặc chọn từ máy
           </p>
           <input
             id="file-input"
             type="file"
-            accept="image/*"
+            accept="image/*,video/*"
             onChange={handleBrowse}
             className="hidden"
           />
@@ -239,25 +316,61 @@ export default function RustEye() {
               htmlFor="file-input"
               className="px-4 py-2 rounded-2xl bg-neutral-900 text-white cursor-pointer shadow"
             >
-              Chọn ảnh
+              Chọn file
             </label>
-            <button
-              onClick={requestPredict}
-              disabled={!file || isLoading}
-              className="px-4 py-2 rounded-2xl bg-orange-500 text-white disabled:opacity-50 shadow"
-            >
-              {isLoading ? "Đang phân tích…" : "Phân tích với RustEye"}
-            </button>
+            {file && (
+              <button
+                onClick={requestPredict}
+                disabled={isLoading}
+                className="px-4 py-2 rounded-2xl bg-orange-500 text-white disabled:opacity-50 shadow"
+              >
+                {isLoading ? "Đang phân tích…" : "Phân tích ảnh với RustEye"}
+              </button>
+            )}
+            {videoFile && (
+              <button
+                onClick={requestVideoPredict}
+                disabled={isLoading}
+                className="px-4 py-2 rounded-2xl bg-orange-500 text-white disabled:opacity-50 shadow"
+              >
+                {isLoading ? "Đang phân tích…" : "Phân tích video với RustEye"}
+              </button>
+            )}
           </div>
           {file && (
             <p className="text-xs text-neutral-500">
-              Đã chọn: {file.name} ({Math.round(file.size / 1024)} KB)
+              Đã chọn ảnh: {file.name} ({Math.round(file.size / 1024)} KB)
             </p>
+          )}
+          {videoFile && (
+            <p className="text-xs text-neutral-500">
+              Đã chọn video: {videoFile.name} ({Math.round(videoFile.size / 1024)} KB)
+            </p>
+          )}
+          {videoFile && (
+            <div className="flex gap-4 mt-2">
+              <label>
+                <input
+                  type="radio"
+                  checked={modelChoice === "isnet"}
+                  onChange={() => setModelChoice("isnet")}
+                />
+                ISNet
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  checked={modelChoice === "sam2"}
+                  onChange={() => setModelChoice("sam2")}
+                />
+                SAM2
+              </label>
+            </div>
           )}
           {error && <div className="text-sm text-red-600 font-medium">{error}</div>}
         </section>
 
-        {/* Hàng 1: Ảnh gốc, Mask hao mòn (YOLO) */}
+        {/* Image Sections */}
         <section className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="bg-white rounded-2xl shadow-sm p-4 border">
             <h2 className="font-semibold mb-3">Ảnh gốc</h2>
@@ -281,7 +394,6 @@ export default function RustEye() {
           </div>
         </section>
 
-        {/* Hàng 2: Mask cột (ISNet), Mask cột (SAM2) */}
         <section className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="bg-white rounded-2xl shadow-sm p-4 border">
             <h2 className="font-semibold mb-3">Mask cột (ISNet)</h2>
@@ -305,7 +417,6 @@ export default function RustEye() {
           </div>
         </section>
 
-        {/* Hàng 3: Kết quả từ ISNet, Kết quả từ SAM2 */}
         {predictResult && (
           <section className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="bg-white rounded-2xl shadow-sm p-4 border">
@@ -329,7 +440,6 @@ export default function RustEye() {
           </section>
         )}
 
-        {/* Hàng 4: Overlay (ảnh gốc + mask ISNet) */}
         <section className="mt-8 bg-white rounded-2xl shadow-sm p-4 border">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-semibold">Overlay (ảnh gốc + mask ISNet)</h2>
@@ -361,7 +471,6 @@ export default function RustEye() {
           )}
         </section>
 
-        {/* Hàng 5: Overlay (ảnh gốc + mask SAM2) */}
         <section className="mt-8 bg-white rounded-2xl shadow-sm p-4 border">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-semibold">Overlay (ảnh gốc + mask SAM2)</h2>
@@ -392,6 +501,52 @@ export default function RustEye() {
             </p>
           )}
         </section>
+
+        {/* Video Sections */}
+        {videoUrl && (
+          <>
+            <section className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-white rounded-2xl shadow-sm p-4 border">
+                <h2 className="font-semibold mb-3">Video gốc</h2>
+                <video src={videoUrl} controls className="w-full h-auto rounded-xl border" />
+              </div>
+              <div className="bg-white rounded-2xl shadow-sm p-4 border">
+                <h2 className="font-semibold mb-3">Video kết quả (với overlay)</h2>
+                {outputVideoUrl ? (
+                  <video
+                    ref={(el) => {
+                      if (el) {
+                        el.playbackRate = 0.25;
+                      }
+                    }}
+                    src={outputVideoUrl}
+                    controls
+                    onError={(e) => console.log("Video play error:", e)}
+                    className="w-full h-auto rounded-xl border"
+                  >
+                    Trình duyệt của bạn không hỗ trợ video này.
+                  </video>
+                ) : (
+                  <div className="h-64 grid place-content-center text-neutral-400">
+                    Chưa có video output
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {videoPredictResult && (
+              <section className="mt-8 bg-white rounded-2xl shadow-sm p-4 border">
+                <h2 className="font-semibold mb-3">Kết quả phân tích video (Model: {videoPredictResult.model_used})</h2>
+                <ul className="text-sm space-y-1">
+                  <li><span className="font-medium">Phần trăm hao mòn trung bình:</span> {videoPredictResult.avg_rust_percentage.toFixed(2)}%</li>
+                  <li><span className="font-medium">Fuzzy level:</span> {videoPredictResult.fuzzy_level.toFixed(2)}</li>
+                  <li><span className="font-medium">Mức độ hư hại:</span> {videoPredictResult.severity}</li>
+                  <li><span className="font-medium">Khuyến nghị:</span> <span className="text-orange-600 font-semibold">{videoPredictResult.action}</span></li>
+                </ul>
+              </section>
+            )}
+          </>
+        )}
 
         <footer className="text-center text-xs text-neutral-500 mt-8">
           Đại học Cần Thơ 2025
